@@ -1,0 +1,57 @@
+version: 2.1
+defaults: &defaults
+  working_directory: ~/repo
+  docker:
+    - image: cimg/node:14.19
+jobs:
+  init:
+    <<: *defaults
+    steps:
+      - checkout
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: install
+          command: npm ci
+      - save_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+          paths:
+            - ./node_modules
+  lint:
+    <<: *defaults
+    steps:
+      - checkout
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: lint
+          command: npm run lint
+  test:
+    <<: *defaults
+    steps:
+      - checkout
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: test
+          command: npm run test
+workflows:
+  version: 2
+  build:
+    jobs:
+      - init
+          filters:
+            branches:
+              ignore: master
+      - lint
+          requires:
+            - init
+          filters:
+            branches:
+              ignore: master
+      - test
+          requires:
+            - init
+          filters:
+            branches:
+              ignore: master
