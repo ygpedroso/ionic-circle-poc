@@ -1,0 +1,7 @@
+{
+  "name": "Ionic Circle CI POC",
+  "integrations": {
+    "cordova": {}
+  },
+  "type": "angular"
+}
