@@ -1,0 +1,178 @@
+version: 2.1
+# Orbs.
+orbs:
+  node: circleci/node@5.0.3
+  macos: circleci/macos@2.3.2
+  android: circleci/android@2.0
+  browser-tools: circleci/browser-tools@1.4.0
+# Defaults.
+defaults: &defaults
+  working_directory: ~/repo
+  executor:
+      name: android/android-docker
+      tag: 2022.09.2-browsers
+# Jobs.
+jobs:
+  init:
+    <<: *defaults
+    steps:
+      - checkout
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: Install Dependencies
+          command: npm ci
+      - save_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+          paths:
+            - ./node_modules
+  lint:
+    <<: *defaults
+    steps:
+      - checkout
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: Lint
+          command: npm run lint
+  test:
+    <<: *defaults
+    steps:
+      - checkout
+      - browser-tools/install-chrome
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: Test
+          command: npm run test
+  build_web:
+    <<: *defaults
+    parameters:
+      flavour:
+        type: string
+    steps:
+      - checkout
+      - restore_cache:
+          key: dependency-ios-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: Build Web
+          command: |
+            sudo npm install -g @ionic/cli cordova @angular/cli
+            cp flavours/<< parameters.flavour >>/config.xml ~/repo/config.xml
+            cp flavours/<< parameters.flavour >>/index.html ~/repo/src/index.html
+            ionic build --configuration production
+            tar czf << parameters.flavour >>.tar.gz -C www .
+      - store_artifacts:
+          path: ~/repo/<< parameters.flavour >>.tar.gz
+          destination: << parameters.flavour >>.tar.gz
+  build_ios:
+    macos:
+      xcode: 13.4.1
+    working_directory: ~/repo
+    parameters:
+        flavour:
+          type: string
+        variant:
+          type: enum
+          enum: ['debug', 'release']
+    steps:
+      - checkout
+      - node/install:
+          node-version: "16.7.0"
+      - restore_cache:
+          key: dependency-ios-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: Build iOS
+          command: |
+            npm ci
+            sudo npm install -g @ionic/cli cordova
+            cp flavours/<< parameters.flavour >>/config.xml ~/repo/config.xml
+            cp flavours/<< parameters.flavour >>/index.html ~/repo/src/index.html
+            if [ << parameters.variant >> == "debug" ]; then
+              ionic cordova build ios
+            fi
+            if [ << parameters.variant >> == "release" ]; then
+              ionic cordova build ios --release
+            fi
+      - save_cache:
+          key: dependency-ios-cache-{{ checksum "package-lock.json" }}
+          paths:
+            - ./node_modules
+  build_android:
+    <<: *defaults
+    parameters:
+      flavour:
+        type: string
+      variant:
+        type: enum
+        enum: ['aab', 'debug', 'release']
+    steps:
+      - checkout
+      - android/accept-licenses
+      - android/restore-gradle-cache
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+      - run:
+          name: Build Android
+          command: |
+            sudo npm install -g @ionic/cli cordova
+            sdkmanager "build-tools;30.0.3"
+            cp flavours/<< parameters.flavour >>/config.xml ~/repo/config.xml
+            cp flavours/<< parameters.flavour >>/index.html ~/repo/src/index.html
+            if [ << parameters.variant >> == "debug" ]; then
+              ionic cordova build android
+            fi
+            if [ << parameters.variant >> == "aab" ]; then
+              ionic cordova build android --release
+            fi
+            if [ << parameters.variant >> == "release" ]; then
+              ionic cordova build android --release -- -- --packageType=apk
+            fi
+      - android/save-gradle-cache
+      - store_artifacts:
+          path: ~/repo/platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          destination: << parameters.flavour >>-debug.apk
+      - store_artifacts:
+          path: ~/repo/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          destination: << parameters.flavour >>-release.apk
+      - store_artifacts:
+          path: ~/repo/platforms/android/app/build/outputs/bundle/release/app-release.aab
+          destination: << parameters.flavour >>-bundle.aab
+# Workflows.
+workflows:
+  version: 2
+  build_and_deploy:
+    jobs:
+      - init
+      - lint:
+          requires:
+            - init
+      - test:
+          requires:
+            - init
+      - build_web:
+          requires:
+            - init
+            - lint
+            - test
+          matrix:
+            parameters:
+              flavour: ["flavour-1", "flavour-2", "flavour-3"]
+      - build_ios:
+          requires:
+            - init
+            - lint
+            - test
+          matrix:
+            parameters:
+              variant: ["debug", "release"] 
+              flavour: ["flavour-1", "flavour-2", "flavour-3"]
+      - build_android:
+          requires:
+            - init
+            - lint
+            - test
+          matrix:
+            parameters:
+              variant: ["aab", "debug", "release"] 
+              flavour: ["flavour-1", "flavour-2", "flavour-3"]
